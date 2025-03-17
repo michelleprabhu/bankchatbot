@@ -1,119 +1,58 @@
 import streamlit as st
+import google.generativeai as genai
 from neo4j import GraphDatabase
-import google.generativeai as genai  # For Gemini API integration
-import time
-import random
-import os
 
-# ✅ Set page configuration FIRST!
-st.set_page_config(page_title="Bank Policy Chatbot", page_icon="💬", layout="wide")
+# Load API Key from Streamlit Secrets
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
-# Set your Gemini API key from Streamlit secrets
-try:
-    genai.configure(api_key=st.secrets["gemini_api_key"])
-except Exception as e:
-    st.error("Failed to configure Gemini API. Check your API key in Streamlit secrets.")
+# Ensure API Key is Set
+if not GEMINI_API_KEY:
+    st.error("GEMINI_API_KEY is missing. Add it in Streamlit Secrets.")
+    st.stop()
 
-# Database connection function
-def get_db_connection():
-    return GraphDatabase.driver(
-        st.secrets["neo4j_uri"],
-        auth=(st.secrets["neo4j_user"], st.secrets["neo4j_password"])
+# Initialize Gemini API with "gemini-1.5-flash"
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel("gemini-1.5-flash")
+
+# Neo4j Connection
+def get_neo4j_connection():
+    driver = GraphDatabase.driver(
+        st.secrets["NEO4J_URI"],
+        auth=(st.secrets["NEO4J_USER"], st.secrets["NEO4J_PASSWORD"])
     )
+    return driver
 
-# Function to fetch relevant bank policies from Neo4j
-def fetch_policies(query):
-    conn = get_db_connection()
-    session = conn.session()
-    
-    cypher_query = """
-    MATCH (p:Policy)
-    WHERE p.text CONTAINS $query
-    RETURN p.text AS policy_text
+# Query Neo4j
+def query_neo4j(query):
+    with get_neo4j_connection().session() as session:
+        result = session.run(query)
+        return [record.values() for record in result]
+
+# Generate Chatbot Response
+def generate_chat_response(user_query):
+    # Fetch relevant data from Neo4j
+    neo4j_query = f"""
+    MATCH (n) WHERE toLower(n.name) CONTAINS toLower('{user_query}')
+    RETURN n.name, n.description LIMIT 5
     """
-    results = session.run(cypher_query, query=query)
-    policies = [record["policy_text"] for record in results]
-    
-    session.close()
-    conn.close()
-    
-    return policies if policies else ["No relevant policies found."]
+    graph_data = query_neo4j(neo4j_query)
 
-# Function to get response from Gemini API
-def get_gemini_response(query, policies):
-    context = "\n".join(policies)
-    prompt = f"Based on the following bank policies, answer the question: \n\n{context}\n\nQuestion: {query}\nAnswer: "
-    
+    context = "Here is some relevant data from our Neo4j database:\n"
+    context += "\n".join([f"- {name}: {desc}" for name, desc in graph_data])
+
+    # Send Query to Gemini
     try:
-        model = genai.GenerativeModel("gemini-1.0-pro-latest")
-        response = model.generate_content(prompt)
-        return response.text if response else "I'm unable to find an answer."
+        response = model.generate_content(f"{context}\nUser query: {user_query}")
+        return response.text if response else "Sorry, I couldn't find a good answer."
     except Exception as e:
-        return "Error retrieving response from Gemini API. Please check your API key and internet connection."
+        return f"Error with Gemini API: {str(e)}"
 
-# Streamlit UI Enhancements
-st.markdown(
-    """
-    <style>
-        .stTextInput>div>div>input {
-            font-size: 16px;
-            padding: 10px;
-            border-radius: 10px;
-        }
-        .stButton>button {
-            font-size: 16px;
-            padding: 10px 20px;
-            border-radius: 10px;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-        }
-        .stButton>button:hover {
-            background-color: #45a049;
-        }
-        .chat-container {
-            background-color: #f9f9f9;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
-            animation: fadeIn 0.5s ease-in-out;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+# Streamlit UI
+st.title("Neo4j-Powered Chatbot (Gemini 1.5 Flash)")
+st.write("Ask me anything related to the graph database!")
 
-st.title("💬 Bank Policy Chatbot")
-st.write("👋 Welcome! Ask me anything about banking policies!")
+user_input = st.text_input("Your question:")
 
-# Chat-like interface with animation
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-
-# User input section
-user_query = st.text_input("Type your question below and press Enter:")
-submit_button = st.button("Ask")
-
-if submit_button and user_query:
-    with st.spinner("Thinking..."):
-        policies = fetch_policies(user_query)
-        gemini_response = get_gemini_response(user_query, policies)
-        time.sleep(random.uniform(0.5, 1.5))  # Simulating response delay with animation
-    
-    # Append the conversation to chat history
-    st.session_state.chat_history.append(("You", user_query))
-    st.session_state.chat_history.append(("Bot", gemini_response))
-
-# Display chat history with animations
-st.write("### 📝 Chat History")
-st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
-for speaker, text in st.session_state.chat_history:
-    st.markdown(
-        f"<p style='animation: fadeIn 0.5s ease-in-out;'><b>{speaker}:</b> {text}</p>", 
-        unsafe_allow_html=True
-    )
-st.markdown("</div>", unsafe_allow_html=True)
+if user_input:
+    response = generate_chat_response(user_input)
+    st.markdown(f"**Chatbot Response:**\n\n{response}")
