@@ -5,6 +5,9 @@ import time
 import random
 import os
 
+# ✅ Set page configuration FIRST!
+st.set_page_config(page_title="Bank Policy Chatbot", page_icon="💬", layout="wide")
+
 # Set your Gemini API key from Streamlit secrets
 try:
     genai.configure(api_key=st.secrets["gemini_api_key"])
@@ -49,8 +52,6 @@ def get_gemini_response(query, policies):
         return "Error retrieving response from Gemini API. Please check your API key and internet connection."
 
 # Streamlit UI Enhancements
-st.set_page_config(page_title="Bank Policy Chatbot", page_icon="💬", layout="wide")
-
 st.markdown(
     """
     <style>
